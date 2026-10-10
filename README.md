@@ -1,8 +1,10 @@
 # ipa-restore
 
-**Restore an offloaded iPhone app from its App Store ID.**
+**Восстановление сгруженных приложений iPhone по ссылке или ID App Store.**
 
-One Python file that finds an app, downloads its IPA through your Apple Account, installs it over USB, and verifies the installed version. No Python packages, jailbreak, or developer signing required.
+[Русский](README.md) · [English](README.en.md)
+
+Небольшая утилита на Python: получает IPA через ваш Apple Account, устанавливает приложение на iPhone по USB и проверяет установленную версию. Работает без Bmrng, jailbreak и установки Python-пакетов.
 
 ```sh
 python3 ipa_restore.py setup
@@ -10,11 +12,11 @@ python3 ipa_restore.py login
 python3 ipa_restore.py restore 771700826
 ```
 
-Tested end to end with **Russian Post 7.8.6** on a real iPhone: interactive Apple login, a fresh download through the open-source [ipatool](https://github.com/majd/ipatool), USB installation, and installed-version verification.
+Сценарий проверен на реальном iPhone: интерактивный вход в Apple Account, повторное скачивание «Почты России» 7.8.6, установка по USB и проверка версии.
 
-## Quick start
+## Быстрый старт
 
-Requirements: **macOS**, Python **3.10+**, an Apple Account that owns the app, and a USB-connected iPhone. Unlock the phone and accept **Trust This Computer** if prompted. Use the account that originally obtained the app.
+Нужны **macOS**, Python **3.10+**, iPhone с подключением по USB и Apple Account, на который приложение уже получено. Разблокируйте телефон и подтвердите «Доверять этому компьютеру», если iPhone спросит.
 
 ```sh
 git clone https://github.com/KobetsDev/ipa-restore.git
@@ -22,93 +24,68 @@ cd ipa-restore
 python3 ipa_restore.py setup
 python3 ipa_restore.py login
 
-# Find the ID by name; search does not need Apple login.
+# Найти ID по названию — вход в Apple Account не нужен.
 python3 ipa_restore.py search "Почта России" --country ru
 
-# Restore by numeric ID, App Store link, or a listed bundle identifier.
+# Восстановить по ID, ссылке App Store или bundle ID приложения.
 python3 ipa_restore.py restore 771700826
 python3 ipa_restore.py restore 'https://apps.apple.com/ru/app/id771700826'
 python3 ipa_restore.py restore ru.russianpost.Russian-Post --country ru
 ```
 
-`login` delegates the interactive Apple Account, password and 2FA prompts to ipatool. Passwords are not command-line arguments. ipatool manages encrypted session storage and may ask for a keychain passphrase. Do not use `sudo` for Apple login.
+Команда `login` передаёт интерактивные запросы Apple ID, пароля и кода двухфакторной аутентификации утилите ipatool. Пароль не передаётся в аргументах командной строки. Для сохранения сессии ipatool может запросить пароль связки ключей macOS. Не запускайте вход через `sudo`.
 
-Before asking for credentials, `login` prepares ipatool's pinned **Unicorn 2.1.4** runtime from its official PyPI wheel. Downloads can resume and have a ten-minute timeout per attempt, avoiding ipatool's built-in two-minute download limit. Both the wheel and extracted library are checked against the hashes pinned in [ipatool 2.7.0](https://github.com/majd/ipatool/blob/v2.7.0/internal/sap/unicorn/artifact.go). No Python package is installed. You can prepare it separately:
+Перед первым входом скрипт подготавливает Unicorn 2.1.4 — компонент ipatool. Загрузка с официального PyPI продолжается после обрыва, а архив и библиотека проверяются по SHA-256 из [исходников ipatool 2.7.0](https://github.com/majd/ipatool/blob/v2.7.0/internal/sap/unicorn/artifact.go). Python-пакеты не устанавливаются. Подготовить компонент отдельно можно командой:
 
 ```sh
 python3 ipa_restore.py prepare-runtime
 ```
 
-If an earlier login failed with **save Unicorn download: context deadline exceeded**, run `login` again with this version. Runtime download failures occur before Apple authentication starts; rerunning `prepare-runtime` resumes the partial download. Custom `--ipatool` executables manage their own runtime.
+`setup` загружает закреплённые версии [ipatool 2.7.0](https://github.com/majd/ipatool) и [go-ios 1.3.2](https://github.com/danielpaulus/go-ios) в `.ipa-restore/bin`, проверяет SHA-256 и извлекает только исполняемые файлы. Их лицензии — MIT. Бинарные файлы в репозитории не хранятся.
 
-`setup` downloads pinned **ipatool 2.7.0** and **go-ios 1.3.2** releases into `.ipa-restore/bin`, verifies their SHA-256 hashes, and extracts only the executables. It does not install global packages. Dependencies retain their own [ipatool MIT](https://github.com/majd/ipatool/blob/main/LICENSE) and [go-ios MIT](https://github.com/danielpaulus/go-ios/blob/main/LICENSE) licenses; binaries are not included in this repository.
-
-## Other workflows
+## Дополнительные команды
 
 ```sh
-# Download without installing; a phone is not needed.
+# Скачать IPA без телефона и установки.
 python3 ipa_restore.py restore 771700826 --download-only --output ./RussianPost.ipa
 
-# Inspect an IPA, or install one you already downloaded.
+# Проверить IPA или установить уже скачанный файл.
 python3 ipa_restore.py inspect ./RussianPost.ipa
 python3 ipa_restore.py install ./RussianPost.ipa
 
-# Several phones connected? Select one explicitly.
+# Посмотреть подключённые телефоны и выбрать нужный.
 python3 ipa_restore.py devices
 python3 ipa_restore.py restore 771700826 --udid YOUR_DEVICE_ID
 
-# Public app information, including its bundle ID and minimum iOS version.
+# Получить открытые сведения о приложении.
 python3 ipa_restore.py lookup 771700826 --country ru
 
-# A specific external version ID, if Apple still serves it.
+# Запросить конкретную версию, если Apple ещё её выдаёт.
 python3 ipa_restore.py restore 771700826 --external-version-id VERSION_ID --output ./older.ipa
 ```
 
-When exactly one phone is connected, it is selected automatically. With several phones, the tool refuses to guess. It checks the connected device before starting a download. Cached IPA files are checked against the requested App Store ID before reuse. Interrupted downloads keep the backend's partial file; retries for recognized transient network failures are bounded by `--retries 0..3` (default 2). License and login failures are not automatically repeated by the wrapper.
+Если подключён один iPhone, скрипт выбирает его автоматически. При нескольких телефонах он попросит указать `--udid`. До скачивания программа проверяет подключение, а ранее скачанную IPA — на соответствие запрошенному ID. Прогресс скачивания и установки выводится в stderr; итоговая сводка JSON — в stdout. Скачивание можно встроить в Python-проект через функции `download_app`, `resolve_app_id` и `inspect_ipa`, установку — через `install_app`.
 
-`restore` prints its stages and ipatool's live download progress to stderr, then writes one JSON result to stdout. Installation stage updates also appear as go-ios reports them. Login keeps ipatool's interactive prompts. `inspect_ipa`, `download_app`, `resolve_app_id`, and `install_app` can be imported into another Python project:
+## Ограничения и безопасность
 
-```python
-from pathlib import Path
-from ipa_restore import inspect_ipa, install_app
+- IPA скачивается по уже имеющейся лицензии Apple. Скрипт не покупает приложения и не пытается получить новые лицензии.
+- Для установки приложение обновляется по bundle ID. Скрипт не удаляет приложение и его данные; обновление может изменить формат данных приложения.
+- Успешная проверка подтверждает bundle ID, версию и `IsDemotedApp: false`; вход в приложение и его данные не проверяются.
+- Apple может не выдавать IPA для сгруженного приложения. Доступность зависит от региона аккаунта, истории покупок, наличия приложения в магазине и версии iOS.
+- Обычное восстановление получает актуальную версию из App Store; она может отличаться от той, что стояла раньше.
+- Скрипт использует неофициальные интерфейсы Apple и установки по USB; изменения на стороне Apple могут повлиять на работу.
 
-report = inspect_ipa(Path("RussianPost.ipa"))
-result = install_app(Path("RussianPost.ipa"), ios="/path/to/ios")
-```
+Если появится `license required`, войдите в тот Apple Account, на который приложение было получено. Если USB-доступ не работает, разблокируйте iPhone, проверьте кабель и доверие этому компьютеру. Для некоторых операций на iOS 17 и новее go-ios может потребоваться туннель — инструкции есть в [документации go-ios](https://github.com/danielpaulus/go-ios).
 
-Global options go **before** the command:
+Не публикуйте папку `.ipa-restore/`, скачанные IPA и файлы сессии. Репозиторий содержит только исходный код, документацию и тесты.
 
-```sh
-python3 ipa_restore.py --home ./my-local-state restore 771700826
-python3 ipa_restore.py --ipatool /path/to/ipatool --ios /path/to/ios restore 771700826
-```
-
-`IPA_RESTORE_HOME` also sets the working directory. Otherwise tools, downloads and private state stay beside the script in `.ipa-restore/`. Standard ipatool uses `XDG_STATE_HOME` for session files; it can migrate an existing legacy `~/.ipatool` session there. Its macOS keychain entries remain managed by ipatool.
-
-On macOS, Go's `os.UserCacheDir` ignores `XDG_CACHE_HOME`. The prepared Unicorn library stays in `.ipa-restore/cache`; a symlink in `~/Library/Caches/ipatool/unicorn/2.1.4/` lets ipatool find it. An already verified cache entry is kept. ipatool also downloads and verifies its Apple SAP assets in `~/Library/Caches/ipatool/sap/` on first login.
-
-## What restoration means
-
-- The tool downloads an App Store package using an existing license. It does not buy apps or automatically obtain new licenses.
-- Installation runs over the app's bundle identifier; the tool never uninstalls an app or erases its container. Application updates may migrate data, so normal device backups remain useful.
-- Success means the iPhone reports the expected bundle ID and version with `IsDemotedApp: false`. It does not verify login or data inside the app.
-- An offloaded icon does not guarantee that Apple still provides the IPA. Region, account ownership, app availability and supported iOS version still matter. No entitlement or DRM bypass is performed.
-- A normal restore asks Apple for the available version, which can differ from the version that was previously installed.
-- These tools use unofficial App Store/device interfaces. A future Apple change can break downloading or installation.
-
-If you see **license required**, log into the original purchasing account. If a bundle lookup returns no results, try a numeric ID or old App Store link; numeric IDs do not require public lookup to succeed. Search by name can only find currently listed apps.
-
-If USB access fails, unlock the phone, check the cable and trust pairing. Some go-ios operations on iOS 17+ require a tunnel; follow the [upstream instructions](https://github.com/danielpaulus/go-ios). This script does not start privileged daemons or change phone settings automatically. In our original restore, listing and installation worked without a tunnel.
-
-Keep `.ipa-restore/`, downloaded IPAs, cookies and account files private. The repository contains only source, documentation and synthetic tests.
-
-## Development
+## Разработка
 
 ```sh
 python3 -m unittest -v
 python3 ipa_restore.py --help
 ```
 
-The tests run without Apple credentials or a real phone. They cover identity validation, corrupted/mismatched packages, runtime checksum validation, device selection and installation verification. On October 10, 2026, the standard backend completed interactive login, a fresh Apple download of Russian Post (App Store ID 771700826), USB installation of version 7.8.6 and verification of the installed bundle/version with `IsDemotedApp: false`. Apple reported `purchased: false`.
+Тесты не требуют Apple Account и телефона. Они проверяют разбор ID, повреждённые и неверные IPA, проверку контрольных сумм, выбор устройства и результат установки. Полный сценарий с обычной Apple-сессией успешно проверен на реальном iPhone: загрузка «Почты России» (ID 771700826), установка версии 7.8.6 и подтверждение `IsDemotedApp: false`. Apple вернул `purchased: false`.
 
-MIT license. Contributions welcome; keep the runtime in one file and avoid committing accounts or packages.
+Лицензия MIT. Предложения по улучшению приветствуются; основной скрипт остаётся одним файлом.
