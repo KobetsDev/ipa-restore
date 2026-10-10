@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-VERSION = '0.1.1'
+VERSION = '0.2.0'
 DEFAULT_HOME = Path(__file__).resolve().parent / '.ipa-restore'
 RELEASES = {
     'arm64': ('ipatool-2.7.0-macos-arm64.tar.gz',
@@ -195,32 +195,13 @@ def tool_path(name: str, home: Path, override: str | None = None) -> str:
     return str(Path(candidate).resolve())
 
 
-def apple_environment(home: Path, bmrng: bool = False) -> dict:
+def apple_environment(home: Path) -> dict:
     env = os.environ.copy()
     state = home / 'state'
     state.mkdir(parents=True, mode=0o700, exist_ok=True)
     env['XDG_STATE_HOME'] = str(state.resolve())
     env['XDG_DATA_HOME'] = str((home / 'data').resolve())
     env['XDG_CACHE_HOME'] = str((home / 'cache').resolve())
-    if bmrng:
-        if platform.system() != 'Darwin':
-            raise RestoreError('--bmrng requires macOS and an existing Bmrng login.')
-        state = home / 'bmrng-state'
-        state.mkdir(mode=0o700, exist_ok=True)
-        source = Path.home() / 'Library/Application Support/bmrng/appstore-cpp-v1'
-        for name in ('account', 'cookies'):
-            if not (state / name).exists() and (source / name).is_file():
-                shutil.copyfile(source / name, state / name)
-                (state / name).chmod(0o600)
-        if not (state / 'account').is_file():
-            raise RestoreError('No saved Bmrng Apple session. Log into Bmrng first or use ordinary login.')
-        result = subprocess.run(['/usr/bin/security', 'find-generic-password', '-s',
-                                 'app.bmrng.ipatool-cpp.v1', '-a', 'storage-key', '-w'],
-                                capture_output=True, timeout=120)
-        if result.returncode:
-            raise RestoreError('Cannot read Bmrng session key. Allow the macOS Keychain prompt.')
-        env['IPATOOL_CONFIG_DIR'] = str(state.resolve())
-        env['IPATOOL_PASSPHRASE'] = result.stdout.decode().rstrip('\r\n')
     return env
 
 
@@ -281,8 +262,7 @@ def stream_download(command: list[str], env: dict | None) -> tuple[int, str]:
 
 
 def download_app(app_id: str, output: Path, ipatool: str, env: dict | None = None,
-                 retries: int = 2, version_id: str | None = None,
-                 bmrng: bool = False) -> dict:
+                 retries: int = 2, version_id: str | None = None) -> dict:
     kind, app_id = parse_target(str(app_id))
     if kind != 'id':
         raise RestoreError('download_app requires a numeric App Store ID.')
@@ -294,14 +274,17 @@ def download_app(app_id: str, output: Path, ipatool: str, env: dict | None = Non
         return report
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [ipatool, 'download', '--app-id', app_id, '--output', str(output), '--format', 'json']
-    if not bmrng:
-        command += ['--non-interactive', '--platform', 'iphone']
+    command += ['--platform', 'iphone']
     if version_id:
         command += ['--external-version-id', version_id]
     for attempt in range(retries + 1):
-        # Progress belongs on stderr; reserve our stdout for the final JSON report.
+        print(f'[ipa-restore] Downloading App Store ID {app_id} (attempt {attempt + 1}/{retries + 1})…',
+              file=sys.stderr, flush=True)
+        # ipatool's interactive mode enables its byte/percent progress bar. Its output is
+        # streamed to stderr here so stdout remains a single machine-readable JSON result.
         code, diagnostics = stream_download(command, env)
         if code == 0:
+            print('[ipa-restore] Download complete; verifying the IPA…', file=sys.stderr, flush=True)
             return inspect_ipa(output, app_id)
         if output.exists():
             raise RestoreError('Downloader failed after producing a final file; inspect it before retrying.')
@@ -337,10 +320,13 @@ def select_device(ios: str, udid: str | None = None) -> str:
 def install_app(ipa: Path, ios: str, udid: str | None = None) -> dict:
     report = inspect_ipa(Path(ipa))
     device = select_device(ios, udid)
+    print(f"[ipa-restore] Installing {report.get('name') or report['bundle_id']} {report.get('version')}…",
+          file=sys.stderr, flush=True)
     result = subprocess.run([ios, 'install', '--path=' + report['ipa'], '--udid=' + device],
                             stdout=sys.stderr, stderr=sys.stderr)
     if result.returncode:
         raise RestoreError('Installation failed. Keep the IPA; no uninstall was performed.')
+    print('[ipa-restore] Checking the installed app and version…', file=sys.stderr, flush=True)
     apps = ios_json(ios, 'apps', '--all', '--udid=' + device)
     matches = [a for a in apps if a.get('CFBundleIdentifier') == report['bundle_id']]
     if (len(matches) != 1 or matches[0].get('IsDemotedApp', False) or
@@ -356,7 +342,6 @@ def parser() -> argparse.ArgumentParser:
                    help='local tools, downloads and private session directory')
     p.add_argument('--ipatool', help='override downloader executable')
     p.add_argument('--ios', help='override go-ios executable')
-    p.add_argument('--bmrng', action='store_true', help='explicitly reuse an existing Bmrng Apple login (macOS)')
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('setup', help='install pinned, checksum-verified tools locally (macOS)')
     sub.add_parser('login', help='interactive Apple Account login through ipatool')
@@ -414,11 +399,6 @@ def main(argv=None) -> int:
             result = (ios_json(ios, 'list') if args.command == 'devices' else
                       install_app(args.ipa, ios, args.udid))
         else:
-            if args.bmrng and args.command == 'login':
-                raise RestoreError('For --bmrng, log into the Bmrng application itself.')
-            if args.bmrng and not args.ipatool:
-                arch = {'arm64': 'arm64', 'x86_64': 'amd64'}.get(platform.machine(), '')
-                args.ipatool = f'/Applications/bmrng.app/Contents/Resources/tools/ipatool-cpp-1.0.9-bmrng.1-darwin-{arch}'
             ipatool = tool_path('ipatool', home, args.ipatool)
             if args.command == 'login':
                 if not args.ipatool:
@@ -429,16 +409,23 @@ def main(argv=None) -> int:
                     raise RestoreError('Apple login failed; see ipatool error above. Session state is kept for the next attempt.')
                 result = {'login_completed': True}
             else:
+                print(f'[ipa-restore] Resolving App Store target {args.target}…', file=sys.stderr, flush=True)
                 app_id = resolve_app_id(args.target, args.country)
                 output = args.output or home / 'downloads' / f'app-{app_id}.ipa'
                 # Select the phone before contacting Apple; do not guess among devices.
                 ios = None if args.download_only else tool_path('ios', home, args.ios)
+                if ios:
+                    print('[ipa-restore] Checking the USB-connected iPhone…', file=sys.stderr, flush=True)
                 device = None if ios is None else select_device(ios, args.udid)
-                env = None if output.exists() else apple_environment(home, args.bmrng)
+                env = None if output.exists() else apple_environment(home)
+                if output.exists():
+                    print(f'[ipa-restore] Reusing and checking cached IPA: {output}',
+                          file=sys.stderr, flush=True)
                 result = download_app(app_id, output, ipatool, env, args.retries,
-                                      args.external_version_id, args.bmrng)
+                                      args.external_version_id)
                 if ios:
                     result = install_app(output, ios, device)
+                print('[ipa-restore] Restore complete.', file=sys.stderr, flush=True)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (RestoreError, OSError, subprocess.SubprocessError, ValueError,

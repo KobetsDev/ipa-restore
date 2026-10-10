@@ -2,7 +2,7 @@
 
 **Restore an offloaded iPhone app from its App Store ID.**
 
-One Python file that finds an app, downloads its IPA through your Apple Account, installs it over USB, and verifies the installed version. No Python packages, jailbreak, developer signing, or Bmrng installation required for the standard workflow.
+One Python file that finds an app, downloads its IPA through your Apple Account, installs it over USB, and verifies the installed version. No Python packages, jailbreak, or developer signing required.
 
 ```sh
 python3 ipa_restore.py setup
@@ -10,7 +10,7 @@ python3 ipa_restore.py login
 python3 ipa_restore.py restore 771700826
 ```
 
-Tested end to end with **Russian Post 7.8.6** on a real iPhone: interactive Apple login, a fresh download through the standard open-source [ipatool](https://github.com/majd/ipatool), USB installation, and installed-version verification. The optional Bmrng adapter was tested separately and is not needed for this workflow.
+Tested end to end with **Russian Post 7.8.6** on a real iPhone: interactive Apple login, a fresh download through the open-source [ipatool](https://github.com/majd/ipatool), USB installation, and installed-version verification.
 
 ## Quick start
 
@@ -66,7 +66,7 @@ python3 ipa_restore.py restore 771700826 --external-version-id VERSION_ID --outp
 
 When exactly one phone is connected, it is selected automatically. With several phones, the tool refuses to guess. It checks the connected device before starting a download. Cached IPA files are checked against the requested App Store ID before reuse. Interrupted downloads keep the backend's partial file; retries for recognized transient network failures are bounded by `--retries 0..3` (default 2). License and login failures are not automatically repeated by the wrapper.
 
-Data commands print JSON to stdout; download/install progress goes to stderr. Login keeps ipatool's interactive prompts. `inspect_ipa`, `download_app`, `resolve_app_id`, and `install_app` can be imported into another Python project:
+`restore` prints its stages and ipatool's live download progress to stderr, then writes one JSON result to stdout. Installation stage updates also appear as go-ios reports them. Login keeps ipatool's interactive prompts. `inspect_ipa`, `download_app`, `resolve_app_id`, and `install_app` can be imported into another Python project:
 
 ```python
 from pathlib import Path
@@ -86,17 +86,6 @@ python3 ipa_restore.py --ipatool /path/to/ipatool --ios /path/to/ios restore 771
 `IPA_RESTORE_HOME` also sets the working directory. Otherwise tools, downloads and private state stay beside the script in `.ipa-restore/`. Standard ipatool uses `XDG_STATE_HOME` for session files; it can migrate an existing legacy `~/.ipatool` session there. Its macOS keychain entries remain managed by ipatool.
 
 On macOS, Go's `os.UserCacheDir` ignores `XDG_CACHE_HOME`. The prepared Unicorn library stays in `.ipa-restore/cache`; a symlink in `~/Library/Caches/ipatool/unicorn/2.1.4/` lets ipatool find it. An already verified cache entry is kept. ipatool also downloads and verifies its Apple SAP assets in `~/Library/Caches/ipatool/sap/` on first login.
-
-## Existing Bmrng users
-
-If Bmrng is already installed and logged into the Apple Account that owns the app:
-
-```sh
-python3 ipa_restore.py setup
-python3 ipa_restore.py --bmrng restore 771700826
-```
-
-This explicit opt-in uses Bmrng's **installed** ipatool-cpp 1.0.9-bmrng.1, copies its encrypted session and cookies to `.ipa-restore/bmrng-state`, and reads the session key from macOS Keychain into process memory. macOS may ask you to allow access. The key is never printed or written to disk by this script. Bmrng updates may change the tool path; use `--ipatool` to override it. This adapter is version-specific and Bmrng is not required for the standard backend.
 
 ## What restoration means
 
@@ -120,6 +109,6 @@ python3 -m unittest -v
 python3 ipa_restore.py --help
 ```
 
-The 23 tests run without Apple credentials or a real phone. They cover identity validation, corrupted/mismatched packages, runtime checksum validation, device selection and installation verification. On October 10, 2026, the standard backend completed interactive login, a fresh Apple download of Russian Post (App Store ID 771700826), USB installation of version 7.8.6 and verification of the installed bundle/version with `IsDemotedApp: false`. Apple reported `purchased: false`. The Bmrng adapter was also tested separately on a real iPhone.
+The tests run without Apple credentials or a real phone. They cover identity validation, corrupted/mismatched packages, runtime checksum validation, device selection and installation verification. On October 10, 2026, the standard backend completed interactive login, a fresh Apple download of Russian Post (App Store ID 771700826), USB installation of version 7.8.6 and verification of the installed bundle/version with `IsDemotedApp: false`. Apple reported `purchased: false`.
 
 MIT license. Contributions welcome; keep the runtime in one file and avoid committing accounts or packages.

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -111,7 +112,7 @@ class PackageTests(unittest.TestCase):
         run.assert_not_called()
 
     @patch('ipa_restore.stream_download')
-    def test_no_purchase_flag_and_explicit_ios_platform(self, run):
+    def test_purchase_is_never_requested_and_interactive_progress_is_enabled(self, run):
         self.path.unlink()
         def download(command, env):
             make_ipa(self.path)
@@ -120,7 +121,7 @@ class PackageTests(unittest.TestCase):
         app.download_app('12345', self.path, '/fake/ipatool')
         command = run.call_args.args[0]
         self.assertNotIn('--purchase', command)
-        self.assertIn('--non-interactive', command)
+        self.assertNotIn('--non-interactive', command)
         self.assertIn('iphone', command)
 
     @patch('ipa_restore.stream_download', return_value=(1, 'license is required'))
@@ -172,6 +173,16 @@ class DeviceTests(unittest.TestCase):
         for call in run.call_args_list:
             self.assertEqual(call.args[0][1], 'install')
             self.assertNotIn('uninstall', call.args[0])
+
+
+class ProgressTests(unittest.TestCase):
+    def test_stream_download_forwards_carriage_return_progress_to_stderr(self):
+        output = "print('Downloading 20%\\rDownloading 100%\\r')"
+        with patch('ipa_restore.sys.stderr') as stderr:
+            code, tail = app.stream_download([sys.executable, '-c', output], None)
+        self.assertEqual(code, 0)
+        self.assertIn('Downloading 20%', tail)
+        self.assertIn('Downloading 100%', stderr.write.call_args_list[-1].args[0])
 
 
 class SetupTests(unittest.TestCase):
