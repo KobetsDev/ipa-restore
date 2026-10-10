@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 DEFAULT_HOME = Path(__file__).resolve().parent / '.ipa-restore'
 RELEASES = {
     'arm64': ('ipatool-2.7.0-macos-arm64.tar.gz',
@@ -31,6 +31,16 @@ RELEASES = {
                '05f48994d8b3cfefe7ea1172a0ac0b28715888e9df0af38cf3e490d2ed592263'),
 }
 IOS_SHA256 = '100f225bfdd039081bcbdaf45029df3e67032673f3e0ca1fa3c050898c230c57'
+UNICORN = {
+    'arm64': ('6c/ae/4943c6f8524d729ec7d5e69df6407ea05d710fe77471d91cecf3fc64eb57',
+              'macosx_11_0_arm64',
+              'd6c93e0f60328d8f4a1792af3f834137a28050fcc2305f2ec01efe8558a9844e',
+              '7207c8e3d7a63118fb0bca73e01816797fd51b1d8a39a4cbc7abfd562ee59c85'),
+    'x86_64': ('c8/a7/92b47771e2107a201632a199cec91e8a81ee8a071ca6b7e7d600d8c61ac9',
+               'macosx_10_9_x86_64',
+               '2a6f738fab5fabffa56af1e7bbf16ea1e91466c342f8dc64f125bd70f36c6b80',
+               '51c4a6f3ce22628ecd3acd1c49b921a818ffb989ca2c473134cc7eb06094f256'),
+}
 
 
 class RestoreError(Exception):
@@ -95,6 +105,49 @@ def resolve_app_id(target: str, country: str = 'us') -> str:
 def public_app(app: dict) -> dict:
     return {key: app.get(key) for key in
             ('trackId', 'trackName', 'bundleId', 'version', 'minimumOsVersion', 'trackViewUrl')}
+
+
+def prepare_runtime(home: Path) -> dict:
+    """Preload ipatool 2.7.0's pinned runtime before asking for credentials."""
+    if platform.system() != 'Darwin' or platform.machine() not in UNICORN:
+        raise RestoreError('Runtime preparation supports macOS arm64/x86_64.')
+    package, tag, archive_hash, library_hash = UNICORN[platform.machine()]
+    directory = home / 'cache' / 'unicorn' / '2.1.4' / library_hash
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    library = directory / 'libunicorn.2.dylib'
+    if not library.is_file() or hashlib.sha256(library.read_bytes()).hexdigest() != library_hash:
+        archive = directory / 'unicorn.whl.part'
+        url = f'https://files.pythonhosted.org/packages/{package}/unicorn-2.1.4-cp37-abi3-{tag}.whl'
+        print('Preparing Unicorn 2.1.4 (verified official PyPI wheel; download can resume)…', file=sys.stderr)
+        command = ['/usr/bin/curl', '--fail', '--show-error', '--location',
+                   '--connect-timeout', '30', '--max-time', '600', '--retry', '2',
+                   '--retry-delay', '2', '--continue-at', '-', '--output', str(archive), url]
+        result = subprocess.run(command)
+        if result.returncode:
+            raise RestoreError('Unicorn download failed. Run prepare-runtime again to resume; Apple login has not started.')
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != archive_hash:
+            archive.unlink()
+            raise RestoreError('Unicorn archive checksum mismatch; nothing loaded. Run prepare-runtime again.')
+        with zipfile.ZipFile(archive) as wheel:
+            binary = wheel.read('unicorn/lib/libunicorn.2.dylib')
+        if hashlib.sha256(binary).hexdigest() != library_hash:
+            raise RestoreError('Unicorn library checksum mismatch; nothing loaded.')
+        temporary = library.with_suffix('.new')
+        temporary.write_bytes(binary)
+        temporary.chmod(0o600)
+        temporary.replace(library)
+        archive.unlink()
+    # Go's os.UserCacheDir ignores XDG_CACHE_HOME on macOS. Keep the actual
+    # dependency in the project and expose only a symlink in ipatool's cache.
+    upstream = Path.home() / 'Library' / 'Caches' / 'ipatool' / 'unicorn' / '2.1.4' / library_hash
+    upstream.mkdir(parents=True, mode=0o700, exist_ok=True)
+    destination = upstream / library.name
+    if destination.is_file() and hashlib.sha256(destination.read_bytes()).hexdigest() == library_hash:
+        return {'unicorn_ready': True, 'library': str(destination)}
+    if destination.exists() or destination.is_symlink():
+        raise RestoreError(f'Unicorn cache contains an invalid file: {destination}. Inspect it before retrying.')
+    destination.symlink_to(library.resolve())
+    return {'unicorn_ready': True, 'library': str(library.resolve())}
 
 
 def setup(home: Path) -> dict:
@@ -307,6 +360,7 @@ def parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('setup', help='install pinned, checksum-verified tools locally (macOS)')
     sub.add_parser('login', help='interactive Apple Account login through ipatool')
+    sub.add_parser('prepare-runtime', help='download and verify the login runtime with resumable transfers')
     sub.add_parser('devices', help='list USB-connected iPhone identifiers')
     search = sub.add_parser('search', help='find App Store IDs by name; no Apple login needed')
     search.add_argument('query')
@@ -344,6 +398,8 @@ def main(argv=None) -> int:
     try:
         if args.command == 'setup':
             result = setup(home)
+        elif args.command == 'prepare-runtime':
+            result = prepare_runtime(home)
         elif args.command == 'search':
             result = [public_app(a) for a in store_query('search', term=args.query,
                        country=args.country, entity='software', limit=args.limit).get('results', [])]
@@ -365,8 +421,12 @@ def main(argv=None) -> int:
                 args.ipatool = f'/Applications/bmrng.app/Contents/Resources/tools/ipatool-cpp-1.0.9-bmrng.1-darwin-{arch}'
             ipatool = tool_path('ipatool', home, args.ipatool)
             if args.command == 'login':
+                if not args.ipatool:
+                    prepare_runtime(home)
                 env = apple_environment(home)
-                subprocess.run([ipatool, 'auth', 'login'], env=env, check=True)
+                completed = subprocess.run([ipatool, 'auth', 'login'], env=env)
+                if completed.returncode:
+                    raise RestoreError('Apple login failed; see ipatool error above. Session state is kept for the next attempt.')
                 result = {'login_completed': True}
             else:
                 app_id = resolve_app_id(args.target, args.country)

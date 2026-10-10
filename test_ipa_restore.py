@@ -185,5 +185,44 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(list((Path(directory) / 'bin').iterdir()), [])
 
 
+class RuntimeTests(unittest.TestCase):
+    @patch('ipa_restore.platform.machine', return_value='arm64')
+    @patch('ipa_restore.platform.system', return_value='Darwin')
+    def test_verified_library_needs_no_network_and_links_project_cache(self, *_):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = b'verified-test-runtime'
+            digest = hashlib.sha256(binary).hexdigest()
+            cache = root / 'project/cache/unicorn/2.1.4' / digest
+            cache.mkdir(parents=True)
+            library = cache / 'libunicorn.2.dylib'
+            library.write_bytes(binary)
+            with patch.dict(app.UNICORN, {'arm64': ('package', 'tag', 'archive-hash', digest)}), \
+                    patch('ipa_restore.Path.home', return_value=root / 'user'), \
+                    patch('ipa_restore.subprocess.run') as run:
+                report = app.prepare_runtime(root / 'project')
+                run.assert_not_called()
+                self.assertTrue(report['unicorn_ready'])
+                link = root / 'user/Library/Caches/ipatool/unicorn/2.1.4' / digest / library.name
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(link.resolve(), library.resolve())
+
+    @patch('ipa_restore.platform.machine', return_value='arm64')
+    @patch('ipa_restore.platform.system', return_value='Darwin')
+    def test_bad_wheel_rejected_before_cache_link(self, *_):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            digest = app.UNICORN['arm64'][3]
+            cache = root / 'project/cache/unicorn/2.1.4' / digest
+            cache.mkdir(parents=True)
+            (cache / 'unicorn.whl.part').write_bytes(b'tampered')
+            with patch('ipa_restore.Path.home', return_value=root / 'user'), \
+                    patch('ipa_restore.subprocess.run', return_value=subprocess.CompletedProcess([], 0)):
+                with self.assertRaisesRegex(app.RestoreError, 'checksum'):
+                    app.prepare_runtime(root / 'project')
+            self.assertFalse((root / 'user').exists())
+            self.assertFalse((cache / 'libunicorn.2.dylib').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

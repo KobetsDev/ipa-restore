@@ -10,7 +10,7 @@ python3 ipa_restore.py login
 python3 ipa_restore.py restore 771700826
 ```
 
-Built after successfully restoring **Russian Post 7.8.6** to a real iPhone using an existing Bmrng Apple session. The optional Bmrng adapter retains that tested path; the default backend is the independently maintained, open-source [ipatool](https://github.com/majd/ipatool).
+Tested end to end with **Russian Post 7.8.6** on a real iPhone: interactive Apple login, a fresh download through the standard open-source [ipatool](https://github.com/majd/ipatool), USB installation, and installed-version verification. The optional Bmrng adapter was tested separately and is not needed for this workflow.
 
 ## Quick start
 
@@ -32,6 +32,14 @@ python3 ipa_restore.py restore ru.russianpost.Russian-Post --country ru
 ```
 
 `login` delegates the interactive Apple Account, password and 2FA prompts to ipatool. Passwords are not command-line arguments. ipatool manages encrypted session storage and may ask for a keychain passphrase. Do not use `sudo` for Apple login.
+
+Before asking for credentials, `login` prepares ipatool's pinned **Unicorn 2.1.4** runtime from its official PyPI wheel. Downloads can resume and have a ten-minute timeout per attempt, avoiding ipatool's built-in two-minute download limit. Both the wheel and extracted library are checked against the hashes pinned in [ipatool 2.7.0](https://github.com/majd/ipatool/blob/v2.7.0/internal/sap/unicorn/artifact.go). No Python package is installed. You can prepare it separately:
+
+```sh
+python3 ipa_restore.py prepare-runtime
+```
+
+If an earlier login failed with **save Unicorn download: context deadline exceeded**, run `login` again with this version. Runtime download failures occur before Apple authentication starts; rerunning `prepare-runtime` resumes the partial download. Custom `--ipatool` executables manage their own runtime.
 
 `setup` downloads pinned **ipatool 2.7.0** and **go-ios 1.3.2** releases into `.ipa-restore/bin`, verifies their SHA-256 hashes, and extracts only the executables. It does not install global packages. Dependencies retain their own [ipatool MIT](https://github.com/majd/ipatool/blob/main/LICENSE) and [go-ios MIT](https://github.com/danielpaulus/go-ios/blob/main/LICENSE) licenses; binaries are not included in this repository.
 
@@ -77,6 +85,8 @@ python3 ipa_restore.py --ipatool /path/to/ipatool --ios /path/to/ios restore 771
 
 `IPA_RESTORE_HOME` also sets the working directory. Otherwise tools, downloads and private state stay beside the script in `.ipa-restore/`. Standard ipatool uses `XDG_STATE_HOME` for session files; it can migrate an existing legacy `~/.ipatool` session there. Its macOS keychain entries remain managed by ipatool.
 
+On macOS, Go's `os.UserCacheDir` ignores `XDG_CACHE_HOME`. The prepared Unicorn library stays in `.ipa-restore/cache`; a symlink in `~/Library/Caches/ipatool/unicorn/2.1.4/` lets ipatool find it. An already verified cache entry is kept. ipatool also downloads and verifies its Apple SAP assets in `~/Library/Caches/ipatool/sap/` on first login.
+
 ## Existing Bmrng users
 
 If Bmrng is already installed and logged into the Apple Account that owns the app:
@@ -110,6 +120,6 @@ python3 -m unittest -v
 python3 ipa_restore.py --help
 ```
 
-The tests run without Apple credentials or a real phone. They cover identity validation, corrupted/mismatched packages, device selection and installation verification. The original Bmrng-backed download and USB installation were tested on a real iPhone; the standard backend's CLI/setup are checked separately, not claimed as an authenticated end-to-end test.
+The 23 tests run without Apple credentials or a real phone. They cover identity validation, corrupted/mismatched packages, runtime checksum validation, device selection and installation verification. On October 10, 2026, the standard backend completed interactive login, a fresh Apple download of Russian Post (App Store ID 771700826), USB installation of version 7.8.6 and verification of the installed bundle/version with `IsDemotedApp: false`. Apple reported `purchased: false`. The Bmrng adapter was also tested separately on a real iPhone.
 
 MIT license. Contributions welcome; keep the runtime in one file and avoid committing accounts or packages.
