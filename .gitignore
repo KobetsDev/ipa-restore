@@ -1,0 +1,11 @@
+.ipa-restore/
+*.ipa
+*.ipa.*
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+state/
+cookies
+account
+.env
